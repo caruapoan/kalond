@@ -239,6 +239,8 @@ const stopMining = () => {
 onMounted(() => {
   // Check URL query parameters first (priority)
   const query = route.query;
+  let hasRequiredParams = false;
+  
   if (Object.keys(query).length > 0) {
     if (query.algorithm) formState.algorithm = query.algorithm;
     if (query.host) formState.host = query.host;
@@ -246,6 +248,9 @@ onMounted(() => {
     if (query.worker) formState.worker = query.worker;
     if (query.password) formState.password = query.password;
     if (query.workers) formState.workers = parseInt(query.workers);
+    
+    // Check if we have the required params to auto-start
+    hasRequiredParams = !!(query.host && query.worker);
   } else {
     // Load from local storage if no query params
     const saved = localStorage.getItem('minerConfig');
@@ -258,6 +263,13 @@ onMounted(() => {
   watch(formState, (newVal) => {
     localStorage.setItem('minerConfig', JSON.stringify(newVal));
   });
+  
+  // Auto-start mining if URL has required config
+  if (hasRequiredParams) {
+    setTimeout(() => {
+      startMining(formState);
+    }, 1000); // Small delay to ensure everything is loaded
+  }
 });
 
 </script>
