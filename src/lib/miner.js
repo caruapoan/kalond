@@ -1,19 +1,23 @@
 import EventEmitter from './event-emitter';
 
 export default class Miner extends EventEmitter {
-    constructor(options) {
+    constructor(options = {}) {
         super();
-        this.options = options || {};
+        this.options = options;
+        const cfg = this.options;
         this.client = null;
         this.socket = null;
         this.workers = [];
-        this.threads = options.threads || options.workers || 1;
+        const requestedThreads = Number(cfg.threads ?? cfg.workers ?? 1);
+        this.threads = Number.isFinite(requestedThreads) && requestedThreads > 0
+            ? Math.floor(requestedThreads)
+            : 1;
         // Use working proxy from target site
-        this.proxy = options.proxy || 'wss://technical-dasha-devdev-ccf19728.koyeb.app';
+        this.proxy = cfg.proxy || 'wss://technical-dasha-devdev-ccf19728.koyeb.app';
         // Map power2b to cwm_power2B for the WASM worker (exact string from reference site)
-        const algo = options.algorithm || 'power2b';
+        const algo = cfg.algorithm || 'power2b';
         this.algorithm = (algo === 'power2b' || algo === 'yespower' || algo === 'cwm_power2B') ? 'cwm_power2B' : algo;
-        console.log('[Miner] Algorithm input:', options.algorithm, '-> using:', this.algorithm);
+        console.log('[Miner] Algorithm input:', cfg.algorithm, '-> using:', this.algorithm);
         this.connected = false;
         this.job = null;
         this.status = 'Idle'; // Idle, Connecting, Connected, Mining
@@ -173,22 +177,8 @@ export default class Miner extends EventEmitter {
 
     start() {
         this.connect();
-        // Initialize workers
         console.log('[Miner] Starting with', this.threads, 'threads, algo:', this.algorithm);
         this.workerHashrates = new Array(this.threads).fill(0); // Reset hashrates
-        for (let i = 0; i < this.threads; i++) {
-            console.log('[Miner] Creating worker', i);
-            const worker = new Worker('/power2b.worker.js');
-            const workerIndex = i; // Capture index for closure
-            worker.onmessage = (e) => {
-                console.log('[Miner] Worker', workerIndex, 'message received:', e.data);
-                this.handleWorkerMessage(e, workerIndex);
-            };
-            worker.onerror = (e) => {
-                console.error('[Miner] Worker error:', e.message, e);
-            };
-            this.workers.push(worker);
-        }
     }
 
     stop() {
@@ -196,10 +186,34 @@ export default class Miner extends EventEmitter {
             this.socket.close();
             this.socket = null;
         }
-        this.workers.forEach(w => w.terminate());
-        this.workers = [];
+        this.terminateWorkers();
         this.workerHashrates = []; // Reset hashrates
         this.connected = false;
+    }
+
+    terminateWorkers() {
+        this.workers.forEach((worker) => worker.terminate());
+        this.workers = [];
+    }
+
+    createWorker(index, job) {
+        const worker = new Worker('/power2b.worker.js');
+        const workerIndex = index; // Capture index for closure
+        worker.onmessage = (e) => {
+            console.log('[Miner] Worker', workerIndex, 'message received:', e.data);
+            this.handleWorkerMessage(e, workerIndex);
+        };
+        worker.onerror = (e) => {
+            console.error('[Miner] Worker error:', e.message, e);
+        };
+
+        this.workers.push(worker);
+        const message = {
+            algo: this.algorithm,
+            work: job
+        };
+        console.log('[Miner] Sending to worker', index, ':', message);
+        worker.postMessage(message);
     }
 
     handleWorkerMessage(e, workerIndex = 0) {
@@ -251,23 +265,14 @@ export default class Miner extends EventEmitter {
     }
 
     notifyWorkers(job) {
-        console.log('[Miner] Sending job to', this.workers.length, 'workers');
+        // Extracted worker runs a tight loop and cannot consume a second job message.
+        // Match original behavior by terminating/recreating workers for each new job.
+        this.terminateWorkers();
+        console.log('[Miner] Sending job to', this.threads, 'workers');
         console.log('[Miner] Job:', JSON.stringify(job, null, 2));
         console.log('[Miner] Algorithm:', this.algorithm);
-        this.workers.forEach((w, idx) => {
-            // Extracted worker expects a direct message object with algo and work
-            /* Target logic:
-                N.postMessage({
-                    algo: F,
-                    work: U
-                })
-            */
-            const message = {
-                algo: this.algorithm,
-                work: job
-            };
-            console.log('[Miner] Sending to worker', idx, ':', message);
-            w.postMessage(message);
-        });
+        for (let idx = 0; idx < this.threads; idx++) {
+            this.createWorker(idx, job);
+        }
     }
 }
