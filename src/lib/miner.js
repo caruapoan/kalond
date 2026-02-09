@@ -198,14 +198,15 @@ export default class Miner extends EventEmitter {
     handleWorkerMessage(e) {
         const data = e.data;
         if (data.type === 'hashrate') {
-            // Reference site multiplies by 1000 * threads
-            const scaledHashrate = data.value * 1000 * this.threads;
+            // Each worker reports its own hashrate - just apply 1000 multiplier for unit conversion
+            // Don't multiply by threads since each worker already reports individual rate
+            const scaledHashrate = data.value * 1000;
             this.emit('hashrate', scaledHashrate);
         } else if (data.type === 'share' || data.type === 'submit') {
             this.submitShare(data.share || data.data);
             if (data.hashrate) {
-                // Reference site: const B = R * U.data.hashrate; Q("hashrate", 1e3 * B)
-                const scaledHashrate = data.hashrate * 1000 * this.threads;
+                // Each worker reports its own hashrate on share submission
+                const scaledHashrate = data.hashrate * 1000;
                 this.emit('hashrate', scaledHashrate);
             }
         } else if (data.type === 'log') {
